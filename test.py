@@ -35,13 +35,13 @@ EXP_KEY_INFO_XML_CERT = \
 EXP_KEY_INFO_XML_CERT_NO_SUBJECT = \
 "<KeyInfo><X509Data><X509Certificate>ABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCDABCD</X509Certificate></X509Data></KeyInfo>"
 EXP_SIGNED_XML = \
-'<samlp:Response xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="123"><Signature xmlns="http://www.w3.org/2000/09/xmldsig#"><SignedInfo xmlns="http://www.w3.org/2000/09/xmldsig#" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"><CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315#WithComments"></CanonicalizationMethod><SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"></SignatureMethod><Reference URI=""><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"></Transform></Transforms><DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"></DigestMethod><DigestValue>H7olMzu7Zog9nSS7Yl+FQ1Mp8eQ=</DigestValue></Reference></SignedInfo><SignatureValue>AQAwITAJBgUrDgMCGgUABBS2LaIdRUmFpxZc4I16PGDU0hNzEQ==</SignatureValue><KeyInfo>Dummy</KeyInfo></Signature></samlp:Response>'
+'<Signature xmlns="http://www.w3.org/2000/09/xmldsig#"><SignedInfo xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"><CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315#WithComments"></CanonicalizationMethod><SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"></SignatureMethod><Reference URI=""><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"></Transform><Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315#"></Transform></Transforms><DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"></DigestMethod><DigestValue>H7olMzu7Zog9nSS7Yl+FQ1Mp8eQ=</DigestValue></Reference></SignedInfo><SignatureValue>AQAwITAJBgUrDgMCGgUABBRJ7q3SgnqaE206iurZsRe8T4orGg==</SignatureValue><KeyInfo>Dummy</KeyInfo></Signature>'
 EXP_SIGNED_XML_WITH_ID = \
-'<samlp:Response xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" ID="123"><Signature Id="DUMMY ID 123" xmlns="http://www.w3.org/2000/09/xmldsig#"><SignedInfo xmlns="http://www.w3.org/2000/09/xmldsig#" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"><CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315#WithComments"></CanonicalizationMethod><SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"></SignatureMethod><Reference URI=""><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"></Transform></Transforms><DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"></DigestMethod><DigestValue>H7olMzu7Zog9nSS7Yl+FQ1Mp8eQ=</DigestValue></Reference></SignedInfo><SignatureValue>AQAwITAJBgUrDgMCGgUABBS2LaIdRUmFpxZc4I16PGDU0hNzEQ==</SignatureValue><KeyInfo>Dummy</KeyInfo></Signature></samlp:Response>'
+'<Signature xmlns="http://www.w3.org/2000/09/xmldsig#" Id="DUMMY ID 123"><SignedInfo xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"><CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315#WithComments"></CanonicalizationMethod><SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"></SignatureMethod><Reference URI=""><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"></Transform><Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315#"></Transform></Transforms><DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"></DigestMethod><DigestValue>H7olMzu7Zog9nSS7Yl+FQ1Mp8eQ=</DigestValue></Reference></SignedInfo><SignatureValue>AQAwITAJBgUrDgMCGgUABBRJ7q3SgnqaE206iurZsRe8T4orGg==</SignatureValue><KeyInfo>Dummy</KeyInfo></Signature>'
 
 
 class TestKeyInfo(unittest.TestCase):
-  
+
   def test_key_info_xml_rsa(self):
     key_info_xml = top.key_info_xml_rsa(MOD, EXP)
     self.assertEqual(key_info_xml, EXP_KEY_INFO_XML_RSA)
@@ -67,7 +67,8 @@ class TestTrivialKeys(unittest.TestCase):
     self.assertEqual(signed_xml, EXP_SIGNED_XML_WITH_ID)
 
   def test_verify(self):
-    signed_xml = top.sign(XML, private_f, KEY_INFO_XML, KEY_SIZE)
+    signature_xml = top.sign(XML, private_f, KEY_INFO_XML, KEY_SIZE)
+    signed_xml = XML.replace('>', '>'+signature_xml, 1)
     is_verified = top.verify(signed_xml, public_f, KEY_SIZE)
     self.assertTrue(is_verified)
 
@@ -83,9 +84,9 @@ class TestB64(unittest.TestCase):
   def test_int(self):
     num = 22
     self.assertEqual(num, ord(top.b64d(top.b64e(num))))
-  
-    
+
 def main():
   unittest.main()
+
 if __name__ == '__main__':
   main()

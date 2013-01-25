@@ -52,6 +52,7 @@ RX_NS = re.compile('xmlns:[^> ]+')
 RX_SIGNATURE = re.compile('<Signature.*?</Signature>')
 RX_SIGNED_INFO = re.compile('<SignedInfo.*?</SignedInfo>')
 RX_SIG_VALUE = re.compile('<SignatureValue[^>]*>([^>]+)</SignatureValue>')
+RX_CAN_VALUE = re.compile('<CanonicalizationMethod Algorithm=([^>]+)[^>]*>')
 
 # SHA1 digest with ASN.1 BER SHA1 algorithm designator prefix [RSA-SHA1]
 PREFIX = '\x30\x21\x30\x09\x06\x05\x2B\x0E\x03\x02\x1A\x05\x00\x04\x14'
@@ -59,34 +60,31 @@ PREFIX = '\x30\x21\x30\x09\x06\x05\x2B\x0E\x03\x02\x1A\x05\x00\x04\x14'
 # Pattern Map:
 #   xmlns_attr: xml name space definition attributes including ' ' prefix
 #   digest_value: padded hash of message in base64
-PTN_SIGNED_INFO_XML = \
-'<SignedInfo xmlns="http://www.w3.org/2000/09/xmldsig#"%(xmlns_attr)s><CanonicalizationMethod Algorithm="%(canonicalization_method)s%(with_comments)s"></CanonicalizationMethod><SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"></SignatureMethod><Reference URI=""><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"></Transform><Transform Algorithm="%(canonicalization_method)s"/></Transforms><DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"></DigestMethod><DigestValue>%(digest_value)s</DigestValue></Reference></SignedInfo>'
+PTN_SIGNED_INFO_XML = '<SignedInfo xmlns="http://www.w3.org/2000/09/xmldsig#"%(xmlns_attr)s><CanonicalizationMethod Algorithm="%(canonicalization_method)s%(with_comments)s"></CanonicalizationMethod><SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"></SignatureMethod><Reference URI=""><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"></Transform><Transform Algorithm="%(canonicalization_method)s"/></Transforms><DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"></DigestMethod><DigestValue>%(digest_value)s</DigestValue></Reference></SignedInfo>'
 
 # Pattern Map:
 #   signed_info_xml: str <SignedInfo> bytestring xml
 #   signature_value: str computed signature from <SignedInfo> in base64
 #   key_info_xml: str <KeyInfo> bytestring xml of signing key information
 #   signature_id: str in form `Id="VALUE" ` (trailing space required) or ""
-PTN_SIGNATURE_XML = \
-'<Signature %(signature_id)sxmlns="http://www.w3.org/2000/09/xmldsig#">%(signed_info_xml)s<SignatureValue>%(signature_value)s</SignatureValue>%(key_info_xml)s</Signature>'
+PTN_SIGNATURE_XML = '<Signature %(signature_id)sxmlns="http://www.w3.org/2000/09/xmldsig#">%(signed_info_xml)s<SignatureValue>%(signature_value)s</SignatureValue>%(key_info_xml)s</Signature>'
 
 # Pattern Map:
-#   modulus: str signing RSA key modulus in base64 
+#   modulus: str signing RSA key modulus in base64
 #   exponent: str signing RSA key exponent in base64
-PTN_KEY_INFO_RSA_KEY = \
-'<KeyInfo><KeyValue><RSAKeyValue><Modulus>%(modulus)s</Modulus><Exponent>%(exponent)s</Exponent></RSAKeyValue></KeyValue></KeyInfo>'
+PTN_KEY_INFO_RSA_KEY = '<KeyInfo><KeyValue><RSAKeyValue><Modulus>%(modulus)s</Modulus><Exponent>%(exponent)s</Exponent></RSAKeyValue></KeyValue></KeyInfo>'
 
 # Pattern Map:
 #   cert_b64: str of X509 encryption certificate in base64
 #   subject_name_xml: str <X509SubjectName> bytstring xml or ""
-PTN_KEY_INFO_X509_CERT = \
-'<KeyInfo><X509Data>%(subject_name_xml)s<X509Certificate>%(cert_b64)s</X509Certificate></X509Data></KeyInfo>'
+PTN_KEY_INFO_X509_CERT = '<KeyInfo><X509Data>%(subject_name_xml)s<X509Certificate>%(cert_b64)s</X509Certificate></X509Data></KeyInfo>'
 
 # Pattern Map:
 #   subject_name: str of <SubjectName> value
-PTN_X509_SUBJECT_NAME = \
-'<X509SubjectName>%(subject_name)s</X509SubjectName>'
+PTN_X509_SUBJECT_NAME = '<X509SubjectName>%(subject_name)s</X509SubjectName>'
 
+EXCLUSIVE_CANONICALIZATION = 'http://www.w3.org/2001/10/xml-exc-c14n#'
+DEFAULT_CANONICALIZATION = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315#'
 
 b64d = lambda s: s.decode('base64')
 
@@ -95,7 +93,7 @@ def b64e(s):
     s = itb.int_to_bytes(s)
   return s.encode('base64').replace('\n', '')
 
-def sign(xml, f_private, key_info_xml, key_size, sig_id_value=None, exclusive=False, with_comments=False):
+def sign(xml, f_private, key_info_xml, key_size, sig_id_value=None, exclusive=False, with_comments=True):
   """Return xmldsig XML string from xml_string of XML.
 
   Args:
@@ -140,16 +138,19 @@ def verify(xml, f_public, key_size):
   signature_xml = RX_SIGNATURE.search(xml).group(0)
   unsigned_xml = xml.replace(signature_xml, '')
 
+  canonicalization_xml = RX_CAN_VALUE.search(signature_xml).group(0)
+  exclusive = canonicalization_xml.find(EXCLUSIVE_CANONICALIZATION) != -1
+  with_comments = canonicalization_xml.find("WithComments") != -1
+
   # compute the given signed value
   signature_value = RX_SIG_VALUE.search(signature_xml).group(1)
   expected = f_public(b64d(signature_value))
 
   # compute the actual signed value
-  signed_info_xml = _signed_info(unsigned_xml)
+  signed_info_xml = _signed_info(unsigned_xml, exclusive = exclusive, with_comments = with_comments)
   actual = _signed_value(signed_info_xml, key_size)
 
-  is_verified = (expected == actual)
-  return is_verified
+  return expected == actual
 
 
 def key_info_xml_rsa(modulus, exponent):
@@ -239,15 +240,15 @@ def _signed_info(xml, exclusive, with_comments):
 
 def _canonicalization_method(exclusive):
   if exclusive:
-    return "http://www.w3.org/2001/10/xml-exc-c14n#"
+    return EXCLUSIVE_CANONICALIZATION
   else:
-    return "http://www.w3.org/TR/2001/REC-xml-c14n-20010315#"
+    return DEFAULT_CANONICALIZATION
 
 def _with_comments(with_comments):
   if with_comments:
-    return "WithComments"
+    return 'WithComments'
   else:
-    return ""
+    return ''
 
 def _signed_value(data, key_size):
   """Return unencrypted rsa-sha1 signature value `padded_digest` from `data`.
