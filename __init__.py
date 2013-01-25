@@ -105,10 +105,10 @@ def sign(xml, f_private, key_info_xml, key_size, sig_id_value=None, exclusive=Fa
     key_info_xml: str of <KeyInfo> bytestring xml including public key
     sig_id_value: str of signature id value
   Returns:
-    str: signed bytestring xml
+    str: signature bytestring xml
   """
-  cxml = _convert_xml(xml, exclusive, with_comments)
-  signed_info_xml = _signed_info(cxml, exclusive, with_comments)
+  xml = _convert_xml(xml, exclusive, with_comments)
+  signed_info_xml = _signed_info(xml, exclusive, with_comments)
   signed = _signed_value(signed_info_xml, key_size)
   signature_value = f_private(signed)
 
@@ -123,11 +123,8 @@ def sign(xml, f_private, key_info_xml, key_size, sig_id_value=None, exclusive=Fa
     'key_info_xml': key_info_xml,
     'signature_id': signature_id,
   }
-  csignature_xml = _convert_xml(signature_xml, exclusive, with_comments)
 
-  # insert xmldsig after first '>' in message
-  signed_xml = cxml.replace('>', '>'+signature_xml, 1)
-  return signed_xml
+  return _convert_xml(signature_xml, exclusive, with_comments)
 
 
 def verify(xml, f_public, key_size):
