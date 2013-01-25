@@ -1,4 +1,4 @@
-#!/usr/bin/python2.5
+#!/usr/bin/python
 # -*- coding: utf-8 -*-
 # Copyright © 2011 Andrew D. Yates
 # All Rights Reserved
@@ -17,8 +17,6 @@ Bytestring XML Format
 * XML namespaces must explicitly define all xmlns prefix names
 * XML is in minimum whitespace representation.
 * <Signature> always signs the entire xml string
-* signed XML must be in "Canonicalization" (c14n) form
-  see: http://www.w3.org/TR/2001/REC-xml-c14n-20010315#WithComments
 * <Signature> is always enveloped as the first child of root
   see: http://www.w3.org/2000/09/xmldsig#enveloped-signature
 
@@ -45,6 +43,9 @@ References
 import hashlib
 import re
 import int_to_bytes as itb
+import lxml.etree as ET
+import StringIO
+
 
 RX_ROOT = re.compile('<[^> ]+ ?([^>]*)>')
 RX_NS = re.compile('xmlns:[^> ]+')
@@ -59,7 +60,7 @@ PREFIX = '\x30\x21\x30\x09\x06\x05\x2B\x0E\x03\x02\x1A\x05\x00\x04\x14'
 #   xmlns_attr: xml name space definition attributes including ' ' prefix
 #   digest_value: padded hash of message in base64
 PTN_SIGNED_INFO_XML = \
-'<SignedInfo xmlns="http://www.w3.org/2000/09/xmldsig#"%(xmlns_attr)s><CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315#WithComments"></CanonicalizationMethod><SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"></SignatureMethod><Reference URI=""><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"></Transform></Transforms><DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"></DigestMethod><DigestValue>%(digest_value)s</DigestValue></Reference></SignedInfo>'
+'<SignedInfo xmlns="http://www.w3.org/2000/09/xmldsig#"%(xmlns_attr)s><CanonicalizationMethod Algorithm="%(canonicalization_method)s%(with_comments)s"></CanonicalizationMethod><SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"></SignatureMethod><Reference URI=""><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"></Transform><Transform Algorithm="%(canonicalization_method)s"/></Transforms><DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"></DigestMethod><DigestValue>%(digest_value)s</DigestValue></Reference></SignedInfo>'
 
 # Pattern Map:
 #   signed_info_xml: str <SignedInfo> bytestring xml
@@ -94,7 +95,7 @@ def b64e(s):
     s = itb.int_to_bytes(s)
   return s.encode('base64').replace('\n', '')
 
-def sign(xml, f_private, key_info_xml, key_size, sig_id_value=None):
+def sign(xml, f_private, key_info_xml, key_size, sig_id_value=None, exclusive=False, with_comments=False):
   """Return xmldsig XML string from xml_string of XML.
 
   Args:
@@ -106,10 +107,11 @@ def sign(xml, f_private, key_info_xml, key_size, sig_id_value=None):
   Returns:
     str: signed bytestring xml
   """
-  signed_info_xml = _signed_info(xml)
+  cxml = _convert_xml(xml, exclusive, with_comments)
+  signed_info_xml = _signed_info(cxml, exclusive, with_comments)
   signed = _signed_value(signed_info_xml, key_size)
   signature_value = f_private(signed)
-  
+
   if sig_id_value is None:
     signature_id = ""
   else:
@@ -121,15 +123,16 @@ def sign(xml, f_private, key_info_xml, key_size, sig_id_value=None):
     'key_info_xml': key_info_xml,
     'signature_id': signature_id,
   }
-  
+  csignature_xml = _convert_xml(signature_xml, exclusive, with_comments)
+
   # insert xmldsig after first '>' in message
-  signed_xml = xml.replace('>', '>'+signature_xml, 1)
+  signed_xml = cxml.replace('>', '>'+signature_xml, 1)
   return signed_xml
 
 
 def verify(xml, f_public, key_size):
   """Return if <Signature> is valid for `xml`
-  
+
   Args:
     xml: str of XML with xmldsig <Signature> element
     f_public: func from RSA key public function
@@ -139,11 +142,11 @@ def verify(xml, f_public, key_size):
   """
   signature_xml = RX_SIGNATURE.search(xml).group(0)
   unsigned_xml = xml.replace(signature_xml, '')
-  
+
   # compute the given signed value
   signature_value = RX_SIG_VALUE.search(signature_xml).group(1)
   expected = f_public(b64d(signature_value))
-  
+
   # compute the actual signed value
   signed_info_xml = _signed_info(unsigned_xml)
   actual = _signed_value(signed_info_xml, key_size)
@@ -186,13 +189,13 @@ def key_info_xml_cert(cert_b64, subject_name=None):
     'subject_name_xml': subject_name_xml,
     }
   return xml
-  
+
 
 def _digest(data):
   """SHA1 hash digest of message data.
-  
+
   Implements RFC2437, 9.2.1 EMSA-PKCS1-v1_5, Step 1. for "Hash = SHA1"
-  
+
   Args:
     data: str of bytes to digest
   Returns:
@@ -205,7 +208,7 @@ def _digest(data):
 
 def _get_xmlns_prefixes(xml):
   """Return string of root namespace prefix attributes in given order.
-  
+
   Args:
     xml: str of bytestring xml
   Returns:
@@ -216,7 +219,7 @@ def _get_xmlns_prefixes(xml):
   return ' '.join(ns_attrs)
 
 
-def _signed_info(xml):
+def _signed_info(xml, exclusive, with_comments):
   """Return <SignedInfo> for bytestring xml.
 
   Args:
@@ -231,17 +234,31 @@ def _signed_info(xml):
   signed_info_xml = PTN_SIGNED_INFO_XML % {
     'xmlns_attr': xmlns_attr,
     'digest_value': b64e(_digest(xml)),
+    'canonicalization_method': _canonicalization_method(exclusive),
+    'with_comments': _with_comments(with_comments),
   }
-  return signed_info_xml
+  return _convert_xml(signed_info_xml, exclusive, with_comments)
 
+
+def _canonicalization_method(exclusive):
+  if exclusive:
+    return "http://www.w3.org/2001/10/xml-exc-c14n#"
+  else:
+    return "http://www.w3.org/TR/2001/REC-xml-c14n-20010315#"
+
+def _with_comments(with_comments):
+  if with_comments:
+    return "WithComments"
+  else:
+    return ""
 
 def _signed_value(data, key_size):
   """Return unencrypted rsa-sha1 signature value `padded_digest` from `data`.
-  
+
   The resulting signed value will be in the form:
   (01 | FF* | 00 | prefix | digest) [RSA-SHA1]
   where "digest" is of the generated c14n xml for <SignedInfo>.
-  
+
   Args:
     data: str of bytes to sign
     key_size: int of key length in bits; => len(`data`) + 3
@@ -249,7 +266,7 @@ def _signed_value(data, key_size):
     str: rsa-sha1 signature value of `data`
   """
   asn_digest = PREFIX + _digest(data)
-  
+
   # Pad to "one octet shorter than the RSA modulus" [RSA-SHA1]
   # WARNING: key size is in bits, not bytes!
   padded_size = key_size/8 - 1
@@ -258,3 +275,9 @@ def _signed_value(data, key_size):
   padded_digest = pad + asn_digest
 
   return padded_digest
+
+def _convert_xml(xml, exclusive, with_comments):
+  et     = ET.fromstring(xml).getroottree()
+  output = StringIO.StringIO()
+  et.write_c14n(output, exclusive=exclusive, with_comments=with_comments)
+  return output.getvalue()
