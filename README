@@ -1,3 +1,11 @@
+Extension of https://github.com/andrewdyates/xmldsig with support for
+canonicalization of the XML and changes to the interface (the signature
+is returned from the sign function instead of added as the first element)
+
+...
+
+=========================
+
 xmldsig
 Sign and verify RSA-SHA1 XML Digital Signatures in native Python.
 Version 2
