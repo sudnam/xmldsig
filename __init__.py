@@ -83,8 +83,10 @@ PTN_KEY_INFO_X509_CERT = '<KeyInfo><X509Data>%(subject_name_xml)s<X509Certificat
 #   subject_name: str of <SubjectName> value
 PTN_X509_SUBJECT_NAME = '<X509SubjectName>%(subject_name)s</X509SubjectName>'
 
-EXCLUSIVE_CANONICALIZATION = 'http://www.w3.org/2001/10/xml-exc-c14n#'
-DEFAULT_CANONICALIZATION = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315#'
+C14N_10 = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315#'
+C14N_11 = 'http://www.w3.org/2006/12/xml-c14n11#'
+C14N_10_EXCLUSIVE = 'http://www.w3.org/2001/10/xml-exc-c14n#'
+
 
 b64d = lambda s: s.decode('base64')
 
@@ -93,7 +95,7 @@ def b64e(s):
     s = itb.int_to_bytes(s)
   return s.encode('base64').replace('\n', '')
 
-def sign(xml, f_private, key_info_xml, key_size, sig_id_value=None, exclusive=False, with_comments=True):
+def sign(xml, f_private, key_info_xml, key_size, sig_id_value=None, canonicalization=0, with_comments=True):
   """Return xmldsig XML string from xml_string of XML.
 
   Args:
@@ -102,11 +104,13 @@ def sign(xml, f_private, key_info_xml, key_size, sig_id_value=None, exclusive=Fa
     key_size: int of RSA key modulus size in bits (usually 128, 256, 1024, 2048, etc.)
     key_info_xml: str of <KeyInfo> bytestring xml including public key
     sig_id_value: str of signature id value
+    canonicalization: the canonicalization to use, 0 => 1.0, 1 => 1.0 exclusive, 2 => 1.1
+    with_comments: if comments should be supported in the canonicalization or not
   Returns:
     str: signature bytestring xml
   """
-  xml = _convert_xml(xml, exclusive, with_comments)
-  signed_info_xml = _signed_info(xml, exclusive, with_comments)
+  xml = _convert_xml(xml, canonicalization, with_comments)
+  signed_info_xml = _signed_info(xml, canonicalization, with_comments)
   signed = _signed_value(signed_info_xml, key_size)
   signature_value = f_private(signed)
 
@@ -122,7 +126,7 @@ def sign(xml, f_private, key_info_xml, key_size, sig_id_value=None, exclusive=Fa
     'signature_id': signature_id,
   }
 
-  return _convert_xml(signature_xml, exclusive, with_comments)
+  return _convert_xml(signature_xml, canonicalization, with_comments)
 
 
 def verify(xml, f_public, key_size):
@@ -138,20 +142,32 @@ def verify(xml, f_public, key_size):
   signature_xml = RX_SIGNATURE.search(xml).group(0)
   unsigned_xml = xml.replace(signature_xml, '')
 
-  canonicalization_xml = RX_CAN_VALUE.search(signature_xml).group(0)
-  exclusive = canonicalization_xml.find(EXCLUSIVE_CANONICALIZATION) != -1
-  with_comments = canonicalization_xml.find("WithComments") != -1
+  canonicalization_xml = RX_CAN_VALUE.search(signature_xml).group(1)
+  canonicalization = _parse_canonicalization(canonicalization_xml)
+  with_comments = _parse_with_comments(canonicalization_xml)
 
   # compute the given signed value
   signature_value = RX_SIG_VALUE.search(signature_xml).group(1)
   expected = f_public(b64d(signature_value))
 
   # compute the actual signed value
-  signed_info_xml = _signed_info(unsigned_xml, exclusive = exclusive, with_comments = with_comments)
+  signed_info_xml = _signed_info(unsigned_xml, canonicalization, with_comments)
   actual = _signed_value(signed_info_xml, key_size)
-
+  print "E: "  + expected == actual
   return expected == actual
 
+def _parse_canonicalization(canonicalization_xml):
+  if canonicalization_xml.find(C14N_11) >= 0:
+    return 2
+  elif canonicalization_xml.find(C14N_10_EXCLUSIVE) >= 0:
+    return 1
+  elif canonicalization_xml.find(C14N_10) >= 0:
+    return 0
+  else:
+    throw("Unsupported canonicalization")
+
+def _parse_with_comments(canonicalization_xml):
+  return canonicalization_xml.find("WithComments") > 0
 
 def key_info_xml_rsa(modulus, exponent):
   """Return <KeyInfo> xml bytestring using raw public RSA key.
@@ -217,11 +233,13 @@ def _get_xmlns_prefixes(xml):
   return ' '.join(ns_attrs)
 
 
-def _signed_info(xml, exclusive, with_comments):
+def _signed_info(xml, canonicalization, with_comments):
   """Return <SignedInfo> for bytestring xml.
 
   Args:
     xml: str of bytestring
+    canonicalization: the canonicalization to use, 0 => 1.0, 1 => 1.0 exclusive, 2 => 1.1
+    with_comments: if comments should be supported in the canonicalization or not
   Returns:
     str: xml bytestring of <SignedInfo> computed from `xml`
   """
@@ -232,17 +250,19 @@ def _signed_info(xml, exclusive, with_comments):
   signed_info_xml = PTN_SIGNED_INFO_XML % {
     'xmlns_attr': xmlns_attr,
     'digest_value': b64e(_digest(xml)),
-    'canonicalization_method': _canonicalization_method(exclusive),
+    'canonicalization_method': _canonicalization_method(canonicalization),
     'with_comments': _with_comments(with_comments),
   }
-  return _convert_xml(signed_info_xml, exclusive, with_comments)
+  return _convert_xml(signed_info_xml, canonicalization, with_comments)
 
 
-def _canonicalization_method(exclusive):
-  if exclusive:
-    return EXCLUSIVE_CANONICALIZATION
+def _canonicalization_method(canonicalization):
+  if canonicalization == 0:
+    return C14N_10
+  elif canonicalization == 1:
+    return C14N_10_EXCLUSIVE
   else:
-    return DEFAULT_CANONICALIZATION
+    return C14N_11
 
 def _with_comments(with_comments):
   if with_comments:
@@ -274,8 +294,8 @@ def _signed_value(data, key_size):
 
   return padded_digest
 
-def _convert_xml(xml, exclusive, with_comments):
+def _convert_xml(xml, canonicalization, with_comments):
   et     = ET.fromstring(xml).getroottree()
   output = StringIO.StringIO()
-  et.write_c14n(output, exclusive=exclusive, with_comments=with_comments)
+  et.write_c14n(output, exclusive=canonicalization, with_comments=with_comments)
   return output.getvalue()
