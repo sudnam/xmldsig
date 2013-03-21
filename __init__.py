@@ -80,6 +80,13 @@ PTN_KEY_INFO_RSA_KEY = '<KeyInfo><KeyValue><RSAKeyValue><Modulus>%(modulus)s</Mo
 PTN_KEY_INFO_X509_CERT = '<KeyInfo><X509Data>%(subject_name_xml)s<X509Certificate>%(cert_b64)s</X509Certificate></X509Data></KeyInfo>'
 
 # Pattern Map:
+#   cert_b64: str of X509 encryption certificate in base64
+#   subject_name_xml: str <X509SubjectName> bytstring xml or ""
+#   modulus: str signing RSA key modulus in base64
+#   exponent: str signing RSA key exponent in base64
+PTN_KEY_INFO = '<KeyInfo><X509Data>%(subject_name_xml)s<X509Certificate>%(cert_b64)s</X509Certificate></X509Data><KeyValue><RSAKeyValue><Modulus>%(modulus)s</Modulus><Exponent>%(exponent)s</Exponent></RSAKeyValue></KeyValue></KeyInfo>'
+
+# Pattern Map:
 #   subject_name: str of <SubjectName> value
 PTN_X509_SUBJECT_NAME = '<X509SubjectName>%(subject_name)s</X509SubjectName>'
 
@@ -168,6 +175,33 @@ def _parse_canonicalization(canonicalization_xml):
 
 def _parse_with_comments(canonicalization_xml):
   return canonicalization_xml.find("WithComments") > 0
+
+def key_info_xml(modulus, exponent, cert_b64, subject_name=None):
+  """Return <KeyInfo> xml bytestring using raw public RSA key and RSA X509
+  certificate.
+
+  Args:
+    modulus: str of bytes
+    exponent: str of bytes
+    cert_b64: str of certificate contents in base64
+    subject_name: str of value of <X509SubjectName> or None
+  Returns:
+    str of bytestring xml
+  """
+  if subject_name is None:
+    subject_name_xml = ""
+  else:
+    subject_name_xml = PTN_X509_SUBJECT_NAME % {
+      'subject_name': subject_name,
+      }
+
+  xml = PTN_KEY_INFO % {
+    'modulus': b64e(modulus),
+    'exponent': b64e(exponent),
+    'cert_b64': cert_b64,
+    'subject_name_xml': subject_name_xml,
+    }
+  return xml
 
 def key_info_xml_rsa(modulus, exponent):
   """Return <KeyInfo> xml bytestring using raw public RSA key.
